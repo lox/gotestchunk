@@ -1,80 +1,69 @@
 package commands
 
 import (
-	"bufio"
 	"fmt"
-	"os/exec"
-	"strings"
+
+	"github.com/lox/gotestchunk/pkg/ciparallel"
+	"github.com/lox/gotestchunk/pkg/testlist"
+	"github.com/rs/zerolog"
 )
 
 type ListCmd struct {
-	Packages []string `arg:"" optional:"" help:"Packages to list tests from" type:"path"`
+	Package string `arg:"" optional:"" help:"Package to list tests from" default:"."`
+	Chunks  int    `help:"Number of chunks to split tests into (defaults to CI value if available)" default:"1"`
+	Chunk   int    `help:"Which chunk to output (1-based, defaults to CI value if available)" default:"1"`
+	Format  string `help:"Output format (listTests|listPackages|runPattern)" default:"listTests" enum:"listTests,listPackages,runPattern"`
 }
 
-func (cmd *ListCmd) Run() error {
-	// Default to current directory if no package specified
-	pkgPath := "."
-	if len(cmd.Packages) > 0 {
-		pkgPath = cmd.Packages[0]
+func (cmd *ListCmd) Validate() error {
+	// Check for CI environment variables first
+	if chunk := ciparallel.Detect(); chunk != nil {
+		cmd.Chunk = chunk.Index
+		cmd.Chunks = chunk.Total
 	}
 
-	tests, err := listTests(pkgPath)
-	if err != nil {
-		return fmt.Errorf("error listing tests: %w", err)
+	if cmd.Chunks < 1 {
+		return fmt.Errorf("chunks must be >= 1")
 	}
-
-	// Print tests sorted by package
-	for _, test := range tests {
-		fmt.Println(test)
+	if cmd.Chunk < 1 || cmd.Chunk > cmd.Chunks {
+		return fmt.Errorf("chunk must be between 1 and chunks")
 	}
 	return nil
 }
 
-func listTests(pkgPath string) ([]string, error) {
-	// Get module name first
-	modCmd := exec.Command("go", "list", "-m")
-	modOutput, err := modCmd.Output()
+func (cmd *ListCmd) Run(logger *zerolog.Logger) error {
+	tests, err := testlist.List(cmd.Package)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get module name: %w", err)
-	}
-	moduleName := strings.TrimSpace(string(modOutput))
-
-	// Use go list to get all packages matching the pattern
-	listCmd := exec.Command("go", "list", pkgPath)
-	listOutput, err := listCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list packages: %w", err)
+		return fmt.Errorf("error listing tests: %w", err)
 	}
 
-	var allTests []string
-	scanner := bufio.NewScanner(strings.NewReader(string(listOutput)))
+	logger.Debug().
+		Int("tests", len(tests)).
+		Msg("Found tests")
 
-	// For each package, list its tests
-	for scanner.Scan() {
-		pkg := scanner.Text()
-		// Get all top-level tests
-		cmd := exec.Command("go", "test", "-list", ".", pkg)
-		output, err := cmd.Output()
+	// If chunking is enabled, get the subset of tests for this chunk
+	if cmd.Chunks > 1 {
+		logger.Debug().
+			Int("chunks", cmd.Chunks).
+			Int("chunk", cmd.Chunk).
+			Msg("Chunking tests")
+
+		// Use 0-based index for testlist.Chunk
+		chunkTests, err := testlist.Chunk(tests, cmd.Chunk-1, cmd.Chunks)
 		if err != nil {
-			return nil, fmt.Errorf("failed to list tests for package %s: %w", pkg, err)
+			return fmt.Errorf("error chunking tests: %w", err)
 		}
-
-		// Get relative package path by removing module prefix
-		relPkg := strings.TrimPrefix(pkg, moduleName+"/")
-
-		testScanner := bufio.NewScanner(strings.NewReader(string(output)))
-		for testScanner.Scan() {
-			testName := testScanner.Text()
-			// Only include Test functions, skip empty lines and other patterns
-			if strings.HasPrefix(testName, "Test") {
-				// Prefix test names with relative package path if not in root package
-				if relPkg != "." {
-					testName = relPkg + "." + testName
-				}
-				allTests = append(allTests, testName)
-			}
-		}
+		tests = chunkTests
 	}
 
-	return allTests, nil
+	output, err := testlist.Format(tests, cmd.Format)
+	if err != nil {
+		return err
+	}
+
+	if output != "" {
+		fmt.Println(output)
+	}
+
+	return nil
 }

@@ -1,17 +1,14 @@
 package commands
 
 import (
+	"io"
 	"testing"
 
-	"github.com/lox/gotestchunk/pkg/internal/testutil"
+	"github.com/lox/gotestchunk/pkg/testlist"
+	"github.com/rs/zerolog"
 )
 
 func TestTestCmd_Run(t *testing.T) {
-	moduleRoot, err := testutil.GetModuleRoot()
-	if err != nil {
-		t.Fatalf("failed to get module root: %v", err)
-	}
-
 	tests := []struct {
 		name      string
 		chunks    int
@@ -26,28 +23,31 @@ func TestTestCmd_Run(t *testing.T) {
 			name:    "single chunk",
 			chunks:  1,
 			chunk:   1,
-			pkgPath: moduleRoot + "/pkg/example/...",
+			pkgPath: "./pkg/example/...",
+			json:    false,
 		},
 		{
 			name:    "first of two chunks",
 			chunks:  2,
 			chunk:   1,
-			pkgPath: moduleRoot + "/pkg/example/...",
-			json:    true,
+			pkgPath: "./pkg/example/...",
+			json:    false,
 		},
 		{
 			name:    "with extra args",
 			chunks:  2,
 			chunk:   1,
-			pkgPath: moduleRoot + "/pkg/example/...",
-			args:    []string{"-count=1", "-timeout=10s"},
+			pkgPath: "./pkg/example/...",
+			args:    []string{"--", "-count=1", "-timeout=10s"},
+			json:    false,
 		},
 		{
 			name:    "second of two chunks with verbose",
 			chunks:  2,
 			chunk:   2,
-			pkgPath: moduleRoot + "/pkg/example/...",
+			pkgPath: "./pkg/example/...",
 			verbose: true,
+			json:    false,
 		},
 		{
 			name:      "invalid package",
@@ -59,17 +59,17 @@ func TestTestCmd_Run(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		testlist.TestRunWithModuleRoot(t, tt.name, func(t *testing.T) {
 			cmd := &TestCmd{
-				Chunks:   tt.chunks,
-				Chunk:    tt.chunk,
-				Packages: []string{tt.pkgPath},
-				JSON:     tt.json,
-				Verbose:  tt.verbose,
-				Args:     tt.args,
+				Chunks:  tt.chunks,
+				Chunk:   tt.chunk,
+				Args:    append([]string{tt.pkgPath}, tt.args...),
+				JSON:    tt.json,
+				Verbose: tt.verbose,
 			}
 
-			err := cmd.Run()
+			logger := zerolog.New(io.Discard)
+			err := cmd.Run(&logger)
 			if (err != nil) != tt.wantError {
 				t.Errorf("TestCmd.Run() error = %v, wantError %v", err, tt.wantError)
 			}

@@ -29,22 +29,28 @@ gotestchunk test --chunks=4 --chunk=2 --packages ./pkg/... -- -tags=integration,
 gotestchunk test --chunks=4 --chunk=2 --packages ./pkg/... -- -timeout=10m -count=1
 
 # Run with verbose output
-gotestchunk test  -v --chunks=4 --chunk=2 --packages ./pkg/...
+gotestchunk test -v --chunks=4 --chunk=2 --packages ./pkg/...
 ```
 
-### Manual Chunking
+### Listing and Chunking Tests
 
-For more control, you can use the chunking commands separately:
+The list command provides several ways to view and chunk tests:
 
 ```sh
-# Get test pattern for chunk 2 of 4
-gotestchunk chunk --chunks=4 --chunk=2 ./pkg/...
-
-# Get package paths for chunk 2 of 4
-gotestchunk chunk-packages --chunks=4 --chunk=2 ./pkg/...
-
 # List all tests in a package
 gotestchunk list ./pkg/example
+
+# List tests in chunk 2 of 4
+gotestchunk list --chunks=4 --chunk=2 ./pkg/...
+
+# List package paths for tests
+gotestchunk list --format=listPackages ./pkg/...
+
+# Get test pattern for use with go test -run
+gotestchunk list --format=runPattern ./pkg/...
+
+# Get package paths for chunk 2 of 4
+gotestchunk list --format=listPackages --chunks=4 --chunk=2 ./pkg/...
 ```
 
 ### CI Environment Support
@@ -67,13 +73,26 @@ gotestchunk test --gotestsum --packages ./pkg/... -- -tags=integration
 ### Example Output
 
 ```sh
-# Running tests for chunk 2 of 4 with gotestsum
-$ gotestchunk test --gotestsum --chunks=4 --chunk=2 --packages ./pkg/...
-=== RUN   TestSimple
---- PASS: TestSimple (0.00s)
-=== RUN   TestParallel
---- PASS: TestParallel (0.20s)
-DONE 2 tests in 0.20s
+# List all tests in a package
+$ gotestchunk list ./pkg/example
+TestSimple
+TestParallel
+TestTableDriven
+TestWithSetup
+
+# List tests in chunk 1 of 2
+$ gotestchunk list --chunks=2 --chunk=1 ./pkg/example
+TestSimple
+TestParallel
+
+# List package paths
+$ gotestchunk list --format=listPackages ./pkg/example/...
+./pkg/example
+./pkg/example/sub
+
+# Get test pattern
+$ gotestchunk list --format=runPattern ./pkg/example
+^(TestSimple|TestParallel|TestTableDriven|TestWithSetup)$
 ```
 
 ## Features
@@ -86,6 +105,7 @@ DONE 2 tests in 0.20s
 - Shows parallel tests
 - Includes tests with setup and cleanup
 - Supports all go test flags via `--`
+- Multiple output formats for test listing
 
 ## Contributing
 

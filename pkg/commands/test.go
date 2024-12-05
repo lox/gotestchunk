@@ -4,23 +4,21 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/lox/gotestchunk/pkg/ciparallel"
+	"github.com/lox/gotestchunk/pkg/testlist"
+	"github.com/rs/zerolog"
 )
 
 type TestCmd struct {
-	Chunks        int      `help:"Number of chunks to split tests into (defaults to CI value if available)" default:"1"`
-	Chunk         int      `help:"Which chunk to output (1-based, defaults to CI value if available)" default:"1"`
-	Count         int      `help:"Number of times to run each test" default:"0"`
-	JSON          bool     `help:"Output test results in JSON format" default:"false"`
-	Verbose       bool     `short:"v" help:"Verbose output" default:"false"`
-	Packages      []string `short:"p" required:"" help:"Packages to list tests from"`
-	Gotestsum     bool     `help:"Use gotestsum if available" default:"false"`
-	GotestsumArgs []string `name:"gotestsum-args" help:"Arguments to pass to gotestsum (before --)"`
-	Args          []string `arg:"" optional:"" help:"Extra arguments to pass to go test (after --)"`
+	Chunks    int      `help:"Number of chunks to split tests into (defaults to CI value if available)" default:"1"`
+	Chunk     int      `help:"Which chunk to output (1-based, defaults to CI value if available)" default:"1"`
+	Count     int      `help:"Number of times to run each test" default:"0"`
+	JSON      bool     `help:"Output test results in JSON format" default:"false"`
+	Verbose   bool     `short:"v" help:"Verbose output" default:"false"`
+	Gotestsum bool     `help:"Use gotestsum if available" default:"false"`
+	Args      []string `arg:"" optional:"" passthrough:"" help:"Packages to test, followed by optional -- and test arguments"`
 }
 
 func (cmd *TestCmd) Validate() error {
@@ -39,98 +37,95 @@ func (cmd *TestCmd) Validate() error {
 	return nil
 }
 
-func (cmd *TestCmd) Run() error {
-	// Default to current directory if no package specified
-	pkgPath := "."
-	if len(cmd.Packages) > 0 {
-		pkgPath = cmd.Packages[0]
+func (cmd *TestCmd) Run(logger *zerolog.Logger) error {
+	logger.Info().
+		Strs("args", cmd.Args).
+		Msg("Running test command")
+
+	// Split Args into packages and test args at --
+	var packages []string
+	var testArgs []string
+
+	foundSeparator := false
+	for i, arg := range cmd.Args {
+		if arg == "--" {
+			packages = cmd.Args[:i]
+			testArgs = cmd.Args[i+1:]
+			foundSeparator = true
+			break
+		}
 	}
 
-	// Get module name first
-	modCmd := exec.Command("go", "list", "-m")
-	modOutput, err := modCmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to get module name: %w", err)
+	// If no -- found, all args are packages
+	if !foundSeparator {
+		packages = cmd.Args
 	}
-	moduleName := strings.TrimSpace(string(modOutput))
+	if len(packages) == 0 {
+		packages = []string{"./..."}
+	}
 
 	// Get all tests
-	tests, err := listTests(pkgPath)
+	tests, err := testlist.List(packages...)
 	if err != nil {
 		return fmt.Errorf("error listing tests: %w", err)
 	}
 
-	// Sort tests for deterministic chunking
-	sort.Strings(tests)
+	logger.Info().
+		Int("tests", len(tests)).
+		Msg("Found tests")
 
-	// Calculate chunk size and bounds
-	chunkSize := (len(tests) + cmd.Chunks - 1) / cmd.Chunks
-	start := (cmd.Chunk - 1) * chunkSize
-	end := start + chunkSize
-	if end > len(tests) {
-		end = len(tests)
+	// Get tests for this chunk using testlist.Chunk
+	chunkTests, err := testlist.Chunk(tests, cmd.Chunk-1, cmd.Chunks) // -1 because Chunk is 0-based
+	if err != nil {
+		return fmt.Errorf("error getting chunk: %w", err)
 	}
 
-	// Get tests for this chunk
-	chunkTests := tests[start:end]
 	if len(chunkTests) == 0 {
 		return fmt.Errorf("no tests in chunk %d", cmd.Chunk)
 	}
 
-	// Get unique packages and test pattern
-	packages := make(map[string]bool)
-	testNames := make([]string, 0, len(chunkTests))
-	for _, test := range chunkTests {
-		parts := strings.Split(test, ".")
-		if len(parts) == 2 {
-			packages[parts[0]] = true
-			testNames = append(testNames, parts[1])
-		}
-	}
+	logger.Info().
+		Str("chunk", strconv.Itoa(cmd.Chunk)).
+		Int("tests", len(chunkTests)).
+		Msg("Found chunk tests")
 
 	// Build go test command args
-	goArgs := []string{"test", "-json"}
+	goTestArgs := []string{"test"}
+	if cmd.JSON {
+		goTestArgs = append(goTestArgs, "-json")
+	}
 	if cmd.Verbose {
-		goArgs = append(goArgs, "-v")
+		goTestArgs = append(goTestArgs, "-v")
 	}
 	if cmd.Count > 0 {
-		goArgs = append(goArgs, "-count="+strconv.Itoa(cmd.Count))
+		goTestArgs = append(goTestArgs, "-count="+strconv.Itoa(cmd.Count))
 	}
 
-	// Add any extra args before the test pattern
-	goArgs = append(goArgs, cmd.Args...)
+	// Add any test args before the test pattern
+	if len(testArgs) > 0 {
+		goTestArgs = append(goTestArgs, testArgs...)
+	}
 
 	// Add test pattern
-	pattern := fmt.Sprintf("^(%s)$", strings.Join(testNames, "|"))
-	goArgs = append(goArgs, "-run="+pattern)
-
-	// Add packages with full import paths
-	for pkg := range packages {
-		goArgs = append(goArgs, moduleName+"/"+pkg)
+	pattern, err := testlist.Format(chunkTests, "runPattern")
+	if err != nil {
+		return fmt.Errorf("error formatting test pattern: %w", err)
+	}
+	if pattern != "" {
+		goTestArgs = append(goTestArgs, "-run="+pattern)
 	}
 
-	if cmd.Gotestsum {
-		// Check if gotestsum is available
-		if _, err := exec.LookPath("gotestsum"); err == nil {
-			// Build gotestsum command
-			args := []string{}
-			if len(cmd.GotestsumArgs) > 0 {
-				args = append(args, cmd.GotestsumArgs...)
-			}
-			args = append(args, "--raw-command", "--", "go")
-			args = append(args, goArgs...)
-
-			goCmd := exec.Command("gotestsum", args...)
-			goCmd.Stdout = os.Stdout
-			goCmd.Stderr = os.Stderr
-			return goCmd.Run()
-		} else {
-			fmt.Fprintf(os.Stderr, "Warning: gotestsum not found in PATH, falling back to go test\n")
-		}
+	// Add packages
+	for _, pkg := range testlist.Packages(chunkTests) {
+		goTestArgs = append(goTestArgs, "./"+pkg)
 	}
 
-	// Run go test directly if gotestsum is not requested or not available
-	goCmd := exec.Command("go", goArgs...)
+	logger.Info().
+		Strs("args", goTestArgs).
+		Msg("Running go test")
+
+	// Run go test directly
+	goCmd := exec.Command("go", goTestArgs...)
 	goCmd.Stdout = os.Stdout
 	goCmd.Stderr = os.Stderr
 	return goCmd.Run()
