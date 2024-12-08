@@ -95,6 +95,32 @@ $ gotestchunk list --format=runPattern ./pkg/example
 ^(TestSimple|TestParallel|TestTableDriven|TestWithSetup)$
 ```
 
+### Test Timing Information
+
+To collect test timing information, you can use the `--timing-file` flag:
+
+```sh
+# Collect test timing information
+gotestchunk test --gotestsum --packages ./pkg/... -- -tags=integration --timing-file=timing.json
+```
+
+### Test Distribution with Timing Data
+
+To improve test distribution across chunks, you can use historical timing data:
+
+```sh
+# First run - collect timing data
+gotestchunk test --write-timing=timing-1.json ./pkg/...
+
+# Use timing data to better distribute tests
+gotestchunk test --read-timing="timing-*.json" --chunks=4 --chunk=1 ./pkg/...
+```
+
+The tool will:
+1. Load and aggregate timing data from all matching files
+2. Use the average test duration to distribute tests more evenly across chunks
+3. Fall back to equal distribution if no timing data is available
+
 ## Features
 
 - Splits tests into equal chunks for parallel execution

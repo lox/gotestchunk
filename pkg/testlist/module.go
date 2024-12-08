@@ -26,29 +26,29 @@ func GetModuleRoot() (string, error) {
 	}
 }
 
-// TestRunWithModuleRoot runs the given test function after changing to the module root directory,
-// and restores the original working directory afterwards.
+// TestRunWithModuleRoot runs a test function after changing to the module root directory
 func TestRunWithModuleRoot(t *testing.T, name string, f func(t *testing.T)) {
 	t.Helper()
 
+	// Get current directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("failed to get working directory: %v", err)
+	}
+
+	// Get module root
+	moduleRoot, err := GetModuleRoot()
+	if err != nil {
+		t.Fatalf("failed to get module root: %v", err)
+	}
+
 	t.Run(name, func(t *testing.T) {
-		// Save current directory
-		origDir, err := os.Getwd()
-		if err != nil {
-			t.Fatalf("failed to get working directory: %v", err)
-		}
-
-		moduleRoot, err := GetModuleRoot()
-		if err != nil {
-			t.Fatalf("failed to get module root: %v", err)
-		}
-
 		// Change to module root
 		if err := os.Chdir(moduleRoot); err != nil {
 			t.Fatalf("failed to change to module root: %v", err)
 		}
 
-		// Restore original directory after test
+		// Restore directory after test
 		defer func() {
 			if err := os.Chdir(origDir); err != nil {
 				t.Errorf("failed to restore working directory: %v", err)
