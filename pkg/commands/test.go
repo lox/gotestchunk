@@ -19,9 +19,7 @@ type TestCmd struct {
 	Chunks      int      `help:"Number of chunks to split tests into (defaults to CI value if available)" default:"1"`
 	Chunk       int      `help:"Which chunk to output (1-based, defaults to CI value if available)" default:"1"`
 	Count       int      `help:"Number of times to run each test" default:"0"`
-	JSON        bool     `help:"Output test results in JSON format" default:"false"`
 	Verbose     bool     `short:"v" help:"Verbose output" default:"false"`
-	Gotestsum   bool     `help:"Use gotestsum if available" default:"false"`
 	Args        []string `arg:"" optional:"" passthrough:"" help:"Packages to test, followed by optional -- and test arguments"`
 	WriteTiming string   `help:"Write test timing information to this JSON file" default:""`
 	ReadTiming  string   `help:"Read test timing information from files matching this glob pattern" default:""`
@@ -120,7 +118,7 @@ func (cmd *TestCmd) Run(logger *zerolog.Logger) error {
 			if err != nil {
 				return fmt.Errorf("error loading timing data: %w", err)
 			}
-			logger.Info().
+			logger.Debug().
 				Str("pattern", cmd.ReadTiming).
 				Int("files", len(files)).
 				Int("timings", len(timings)).
@@ -144,16 +142,13 @@ func (cmd *TestCmd) Run(logger *zerolog.Logger) error {
 		return fmt.Errorf("no tests in chunk %d", cmd.Chunk)
 	}
 
-	logger.Info().
+	logger.Debug().
 		Str("chunk", strconv.Itoa(cmd.Chunk)).
 		Int("tests", len(chunkTests)).
 		Msg("Found chunk tests")
 
 	// Build go test command args
-	goTestArgs := []string{}
-	if cmd.JSON || cmd.WriteTiming != "" {
-		goTestArgs = append(goTestArgs, "-json")
-	}
+	goTestArgs := []string{"-json"}
 	if cmd.Verbose {
 		goTestArgs = append(goTestArgs, "-v")
 	}
@@ -180,38 +175,35 @@ func (cmd *TestCmd) Run(logger *zerolog.Logger) error {
 		goTestArgs = append(goTestArgs, "./"+pkg)
 	}
 
-	logger.Debug().
-		Strs("args", goTestArgs).
-		Msg("Running go test")
+	runner := &testrunner.Runner{
+		Args:   goTestArgs,
+		Logger: logger,
+	}
 
 	// If timing file is requested, we need to capture and parse the output
 	if cmd.WriteTiming != "" {
-		// Run tests and collect timing data
-		tests, err := timing.RunTests(goTestArgs)
-		if err != nil {
+		collector := &timing.Collector{}
+		runner.AddHandler(collector)
+
+		// Run tests
+		if err := runner.Run(); err != nil {
 			return fmt.Errorf("error running tests: %w", err)
 		}
 
 		// Write timing data to file if we got any results
-		if len(tests) > 0 {
-			if err := timing.WriteToFile(tests, cmd.WriteTiming); err != nil {
+		if len(collector.Tests) > 0 {
+			if err := timing.WriteToFile(collector.Tests, cmd.WriteTiming); err != nil {
 				return err
 			}
 
 			logger.Info().
 				Str("file", cmd.WriteTiming).
-				Int("tests", len(tests)).
+				Int("tests", len(collector.Tests)).
 				Msg("Wrote test timing information")
 		}
 
 		return nil
 	}
 
-	// Original direct execution path
-	runner := &testrunner.Runner{
-		Args:   goTestArgs,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	}
 	return runner.Run()
 }

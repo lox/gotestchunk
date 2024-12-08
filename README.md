@@ -2,7 +2,7 @@
 
 `gotestchunk` is a command-line interface (CLI) tool written in Go. It is designed to enumerate Go tests in a Go package and split them into chunks. This is particularly useful for CI systems that support parallelism, as it allows for more efficient test execution by distributing the load across multiple shards.
 
-It is designed to integrate neatly with [gotestsum](https://github.com/gotestyourself/gotestsum).
+The tool outputs test results in Go's JSON test format, making it compatible with various test output formatters such as [gotestsum](https://github.com/gotestyourself/gotestsum), [gotestfmt](https://github.com/gotestyourself/gotestfmt), [tparse](https://github.com/mfridman/tparse), and [go-junit-report](https://github.com/jstemmer/go-junit-report).
 
 ## Installation
 
@@ -16,20 +16,48 @@ go install github.com/lox/gotestchunk@latest
 
 ### Running Tests
 
-The simplest way to run chunked tests is with gotestsum:
+Basic usage:
 
 ```sh
-# Run chunk 2 of 4 tests with gotestsum
-gotestchunk test --gotestsum --chunks=4 --chunk=2 --packages ./pkg/...
+# Run chunk 2 of 4 tests
+gotestchunk test --chunks=4 --chunk=2 ./pkg/...
 
 # Pass build tags to go test
-gotestchunk test --chunks=4 --chunk=2 --packages ./pkg/... -- -tags=integration,e2e
+gotestchunk test --chunks=4 --chunk=2 ./pkg/... -- -tags=integration,e2e
 
 # Pass timeout and other flags
-gotestchunk test --chunks=4 --chunk=2 --packages ./pkg/... -- -timeout=10m -count=1
+gotestchunk test --chunks=4 --chunk=2 ./pkg/... -- -timeout=10m -count=1
 
 # Run with verbose output
-gotestchunk test -v --chunks=4 --chunk=2 --packages ./pkg/...
+gotestchunk test -v --chunks=4 --chunk=2 ./pkg/...
+```
+
+### Test Output Formatting
+
+gotestchunk outputs test results in Go's JSON test format, which is compatible with various test output formatters. Here are some popular options:
+
+#### gotestsum
+
+```sh
+gotestchunk test --chunks=4 --chunk=2 ./pkg/... | gotestsum
+```
+
+#### gotestfmt
+
+```sh
+gotestchunk test --chunks=4 --chunk=2 ./pkg/... | gotestfmt
+```
+
+#### tparse
+
+```sh
+gotestchunk test --chunks=4 --chunk=2 ./pkg/... | tparse
+```
+
+#### go-junit-report
+
+```sh
+gotestchunk test --chunks=4 --chunk=2 ./pkg/... | go-junit-report > report.xml
 ```
 
 ### Listing and Chunking Tests
@@ -67,7 +95,7 @@ When these variables are present, you can omit the `--chunks` and `--chunk` flag
 
 ```sh
 # Uses CI environment variables for chunking
-gotestchunk test --gotestsum --packages ./pkg/... -- -tags=integration
+gotestchunk test --packages ./pkg/... -- -tags=integration
 ```
 
 ### Example Output
@@ -101,7 +129,7 @@ To collect test timing information, you can use the `--timing-file` flag:
 
 ```sh
 # Collect test timing information
-gotestchunk test --gotestsum --packages ./pkg/... -- -tags=integration --timing-file=timing.json
+gotestchunk test --packages ./pkg/... -- -tags=integration --timing-file=timing.json
 ```
 
 ### Test Distribution with Timing Data
@@ -120,6 +148,7 @@ The tool will:
 1. Load and aggregate timing data from all matching files
 2. Use the average test duration to distribute tests more evenly across chunks
 3. Fall back to equal distribution if no timing data is available
+
 
 ## Features
 

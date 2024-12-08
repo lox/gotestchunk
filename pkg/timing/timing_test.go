@@ -69,17 +69,17 @@ func TestCollector(t *testing.T) {
 			}
 
 			if tt.wantTest == nil {
-				if len(collector.tests) > 0 {
-					t.Errorf("HandleEvent() collected test when it shouldn't: %+v", collector.tests[0])
+				if len(collector.Tests) > 0 {
+					t.Errorf("HandleEvent() collected test when it shouldn't: %+v", collector.Tests[0])
 				}
 				return
 			}
 
-			if len(collector.tests) != 1 {
-				t.Fatalf("HandleEvent() collected %d tests, want 1", len(collector.tests))
+			if len(collector.Tests) != 1 {
+				t.Fatalf("HandleEvent() collected %d tests, want 1", len(collector.Tests))
 			}
 
-			got := collector.tests[0]
+			got := collector.Tests[0]
 			if got.Package != tt.wantTest.Package {
 				t.Errorf("Package = %v, want %v", got.Package, tt.wantTest.Package)
 			}

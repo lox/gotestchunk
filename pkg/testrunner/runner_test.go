@@ -1,9 +1,9 @@
 package testrunner
 
 import (
-	"bufio"
 	"bytes"
-	"encoding/json"
+	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,20 +22,23 @@ func (c *TestEventCollector) HandleEvent(event TestEvent) error {
 }
 
 func TestRunner(t *testing.T) {
-	// Capture stdout and stderr
-	stdout := &bytes.Buffer{}
-	stderr := &bytes.Buffer{}
-
-	// Create event collector
 	collector := &TestEventCollector{}
+
+	moduleRoot, err := testlist.GetModuleRoot()
+	if err != nil {
+		t.Fatalf("testlist.GetModuleRoot() error = %v", err)
+	}
+
+	logger := zerolog.New(zerolog.NewTestWriter(t)).
+		Level(zerolog.DebugLevel)
 
 	// Run tests in example package
 	runner := &Runner{
-		Args:    []string{"../example/..."},
-		Handler: collector,
-		Stdout:  stdout,
-		Stderr:  stderr,
+		Dir:    moduleRoot,
+		Args:   []string{filepath.Join(moduleRoot, "pkg/example/...")},
+		Logger: &logger,
 	}
+	runner.AddHandler(collector)
 
 	// Run the tests
 	if err := runner.Run(); err != nil {
@@ -43,7 +46,7 @@ func TestRunner(t *testing.T) {
 	}
 
 	// Verify we got test output
-	if stdout.Len() == 0 {
+	if len(collector.Events) == 0 {
 		t.Error("expected test output, got none")
 	}
 
@@ -124,9 +127,13 @@ func TestRunner(t *testing.T) {
 
 // TestRunnerFailure tests that the runner properly handles test failures
 func TestRunnerFailure(t *testing.T) {
+	logger := zerolog.New(zerolog.NewTestWriter(t)).
+		Level(zerolog.DebugLevel)
+
 	// Create a failing test by passing an invalid package path
 	runner := &Runner{
-		Args: []string{"../does-not-exist"},
+		Args:   []string{"../does-not-exist"},
+		Logger: &logger,
 	}
 
 	if err := runner.Run(); err == nil {
@@ -136,8 +143,12 @@ func TestRunnerFailure(t *testing.T) {
 
 // TestRunnerInvalidArgs tests that the runner properly handles invalid arguments
 func TestRunnerInvalidArgs(t *testing.T) {
+	logger := zerolog.New(zerolog.NewTestWriter(t)).
+		Level(zerolog.DebugLevel)
+
 	runner := &Runner{
-		Args: []string{"--invalid-flag"},
+		Args:   []string{"--invalid-flag"},
+		Logger: &logger,
 	}
 
 	if err := runner.Run(); err == nil {
@@ -149,55 +160,49 @@ func TestRunnerWithJSON(t *testing.T) {
 	tests := []struct {
 		name      string
 		args      []string
+		stdout    io.Writer
 		handler   bool
-		wantJSON  bool
 		wantError bool
 	}{
 		{
-			name:     "handler adds json",
-			args:     []string{"./pkg/example/..."},
-			handler:  true,
-			wantJSON: true,
+			name:    "with handler and stdout",
+			args:    []string{"./pkg/example/..."},
+			stdout:  &bytes.Buffer{},
+			handler: true,
 		},
 		{
-			name:     "explicit json without handler",
-			args:     []string{"-json", "./pkg/example/..."},
-			handler:  false,
-			wantJSON: true,
+			name:    "with stdout only",
+			args:    []string{"./pkg/example/..."},
+			stdout:  &bytes.Buffer{},
+			handler: false,
 		},
 		{
-			name:     "both handler and explicit json",
-			args:     []string{"-json", "./pkg/example/..."},
-			handler:  true,
-			wantJSON: true,
+			name:    "without handler or stdout",
+			args:    []string{"./pkg/example/..."},
+			handler: false,
 		},
 		{
 			name:      "invalid package",
-			args:      []string{"-json", "./does-not-exist"},
-			wantJSON:  true,
+			args:      []string{"./does-not-exist"},
 			wantError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		testlist.TestRunWithModuleRoot(t, tt.name, func(t *testing.T) {
-			stdout := &bytes.Buffer{}
-			stderr := &bytes.Buffer{}
+			logger := zerolog.New(zerolog.NewTestWriter(t)).
+				Level(zerolog.DebugLevel)
 
-			var handler EventHandler
-			if tt.handler {
-				handler = &TestEventCollector{}
+			var collector *TestEventCollector
+			runner := &Runner{
+				Args:   tt.args,
+				Logger: &logger,
+				Stdout: tt.stdout,
 			}
 
-			// Create logger that writes to test output
-			logger := zerolog.New(zerolog.NewTestWriter(t)).Level(zerolog.DebugLevel)
-
-			runner := &Runner{
-				Args:    tt.args,
-				Handler: handler,
-				Stdout:  stdout,
-				Stderr:  stderr,
-				Logger:  logger,
+			if tt.handler {
+				collector = &TestEventCollector{}
+				runner.AddHandler(collector)
 			}
 
 			err := runner.Run()
@@ -209,20 +214,20 @@ func TestRunnerWithJSON(t *testing.T) {
 				return
 			}
 
-			if tt.wantJSON {
-				// Look for JSON events in output
-				foundJSON := false
-				scanner := bufio.NewScanner(bytes.NewReader(stdout.Bytes()))
-				for scanner.Scan() {
-					line := scanner.Text()
-					var event TestEvent
-					if err := json.Unmarshal([]byte(line), &event); err == nil {
-						foundJSON = true
-						break
-					}
+			if tt.handler && len(collector.Events) == 0 {
+				t.Error("No events collected")
+			}
+
+			if tt.stdout != nil {
+				var stdout bytes.Buffer
+				if _, ok := tt.stdout.(*bytes.Buffer); ok {
+					stdout = *tt.stdout.(*bytes.Buffer)
+				} else {
+					t.Errorf("Stdout not a buffer")
 				}
-				if !foundJSON {
-					t.Error("No valid JSON events found in output")
+
+				if stdout.Len() == 0 {
+					t.Error("No JSON output written")
 				}
 			}
 		})

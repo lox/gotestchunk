@@ -1,6 +1,7 @@
 package testrunner
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,38 +27,37 @@ type TestEvent struct {
 
 // Runner executes go test and processes the output
 type Runner struct {
-	Args    []string       // Arguments to pass to go test
-	Handler EventHandler   // Handler for test events
-	Stdout  io.Writer      // Where to write test output (defaults to os.Stdout)
-	Stderr  io.Writer      // Where to write test errors (defaults to os.Stderr)
-	Logger  zerolog.Logger // Optional logger for debug output
+	Dir      string          // Directory to run tests in
+	Args     []string        // Arguments to pass to go test
+	Handlers []EventHandler  // Handlers for test events
+	Logger   *zerolog.Logger // Optional logger for debug output
+	Stdout   io.Writer       // Writer for JSON output, defaults to os.Stdout
+}
+
+// AddHandler adds an event handler to the runner
+func (r *Runner) AddHandler(handler EventHandler) {
+	r.Handlers = append(r.Handlers, handler)
 }
 
 // Run executes go test with the given arguments and processes events
 func (r *Runner) Run() error {
-	args := []string{"test"}
-
-	// Check if -json is already in the arguments
-	hasJSON := false
-	for _, arg := range r.Args {
-		if arg == "-json" {
-			hasJSON = true
-			break
+	if r.Dir != "" {
+		if err := os.Chdir(r.Dir); err != nil {
+			return fmt.Errorf("error changing directory: %w", err)
 		}
 	}
 
-	// Add -json if we have a handler and it's not already present
-	if r.Handler != nil && !hasJSON {
-		args = append(args, "-json")
-	}
+	args := []string{"test", "-json"}
 
-	// Add the rest of the arguments
-	args = append(args, r.Args...)
+	// Add the rest of the arguments, filtering out any -json flags
+	for _, arg := range r.Args {
+		if arg != "-json" {
+			args = append(args, arg)
+		}
+	}
 
 	r.Logger.Debug().
 		Strs("args", args).
-		Bool("hasJSON", hasJSON).
-		Bool("hasHandler", r.Handler != nil).
 		Msg("Running go test")
 
 	// Set up command
@@ -69,69 +69,64 @@ func (r *Runner) Run() error {
 		return fmt.Errorf("error creating stdout pipe: %w", err)
 	}
 
-	// Set stderr
-	if r.Stderr != nil {
-		cmd.Stderr = r.Stderr
-	} else {
-		cmd.Stderr = os.Stderr
-	}
+	// Capture stderr to buffer
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
 
 	// Start the command
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("error starting command: %w", err)
 	}
 
-	// Process events in a goroutine if we have a handler or JSON output is requested
-	var done chan error
-	if r.Handler != nil || hasJSON {
-		done = make(chan error, 1)
-		go func() {
-			defer close(done)
-			decoder := json.NewDecoder(stdout)
+	// Default Stdout to os.Stdout if not set
+	if r.Stdout == nil {
+		r.Stdout = os.Stdout
+	}
 
-			for decoder.More() {
-				var event TestEvent
-				if err := decoder.Decode(&event); err != nil {
-					done <- fmt.Errorf("error decoding test output: %w", err)
+	// Process events
+	done := make(chan error, 1)
+	go func() {
+		defer close(done)
+		decoder := json.NewDecoder(stdout)
+		encoder := json.NewEncoder(r.Stdout)
+
+		for decoder.More() {
+			var event TestEvent
+			if err := decoder.Decode(&event); err != nil {
+				done <- fmt.Errorf("error decoding test output: %w", err)
+				return
+			}
+
+			// Process event through all handlers
+			for _, handler := range r.Handlers {
+				if err := handler.HandleEvent(event); err != nil {
+					done <- fmt.Errorf("error handling event: %w", err)
 					return
 				}
-
-				// Write output if requested
-				if r.Stdout != nil && event.Output != "" {
-					if _, err := fmt.Fprint(r.Stdout, event.Output); err != nil {
-						done <- fmt.Errorf("error writing output: %w", err)
-						return
-					}
-				}
-
-				// Process event if we have a handler
-				if r.Handler != nil {
-					if err := r.Handler.HandleEvent(event); err != nil {
-						done <- fmt.Errorf("error handling event: %w", err)
-						return
-					}
-				}
 			}
-			done <- nil
-		}()
-	} else if r.Stdout != nil {
-		// If no JSON handling needed, just copy stdout directly
-		_, err := io.Copy(r.Stdout, stdout)
-		if err != nil {
-			return fmt.Errorf("error copying stdout: %w", err)
+
+			// Write the event to Stdout
+			if err := encoder.Encode(event); err != nil {
+				done <- fmt.Errorf("error encoding event: %w", err)
+				return
+			}
 		}
-	}
+		done <- nil
+	}()
 
 	// Wait for command to finish
 	if err := cmd.Wait(); err != nil {
+		stderrOutput := stderr.String()
+		r.Logger.Error().
+			Str("stderr", stderrOutput).
+			Int("exit_code", cmd.ProcessState.ExitCode()).
+			Msg("Test command failed")
 		return fmt.Errorf("test command failed: %w", err)
 	}
 
-	// Wait for event processing to finish if we're handling JSON
-	if done != nil {
-		if err := <-done; err != nil {
-			return err
-		}
+	// Wait for event processing to finish
+	if err := <-done; err != nil {
+		return err
 	}
 
 	return nil

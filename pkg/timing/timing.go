@@ -19,7 +19,7 @@ type Test struct {
 
 // Collector collects test timing information
 type Collector struct {
-	tests []Test
+	Tests []Test
 }
 
 // HandleEvent processes a test event
@@ -35,28 +35,12 @@ func (c *Collector) HandleEvent(event testrunner.TestEvent) error {
 		pkg = pkg[idx+1:]
 	}
 
-	c.tests = append(c.tests, Test{
+	c.Tests = append(c.Tests, Test{
 		Package: pkg,
 		Test:    event.Test,
 		Time:    time.Duration(event.Elapsed * float64(time.Second)),
 	})
 	return nil
-}
-
-// RunTests runs go test and collects timing information
-func RunTests(args []string) ([]Test, error) {
-	collector := &Collector{}
-	runner := &testrunner.Runner{
-		Args:    args,
-		Handler: collector,
-		Stderr:  os.Stderr,
-	}
-
-	if err := runner.Run(); err != nil {
-		return nil, err
-	}
-
-	return collector.tests, nil
 }
 
 // LoadFromFiles loads and aggregates timing data from the given files

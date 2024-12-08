@@ -19,7 +19,7 @@ jobs:
     - name: Run tests
       run: |
         # Run tests in parallel using go test directly
-        go test -v ./... -count=1
+        go test -v -count=1 -json ./... | gotestsum
 
     - name: Run linter
       uses: golangci/golangci-lint-action@v3
