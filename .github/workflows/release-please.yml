@@ -19,6 +19,7 @@ jobs:
         with:
           release-type: go
           package-name: gotestchunk
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
       # Setup and build/publish only if a new release was created
       - uses: actions/checkout@v4
@@ -32,6 +33,6 @@ jobs:
       - name: Build and publish
         if: ${{ steps.release.outputs.release_created }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
           ./bin/goreleaser release --clean
