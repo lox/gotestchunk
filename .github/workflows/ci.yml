@@ -12,20 +12,26 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Initialize Hermit
-      run: |
-        ./bin/hermit env -r >> $GITHUB_ENV
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+    - uses: cashapp/activate-hermit@v1
+      with:
+        cache: "true"
 
     - name: Run tests
       run: |
         # Run tests in parallel using go test directly
-        go test -v ./... -count=1
+        go test -v -count=1 -json ./... | gotestsum
 
-    - name: Run linter
-      uses: golangci/golangci-lint-action@v3
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
       with:
-        version: latest
-        skip-pkg-cache: true
-        skip-build-cache: true
-        install-mode: binary
-        working-directory: .
+        install-mode: none

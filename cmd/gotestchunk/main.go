@@ -22,6 +22,15 @@ var cli struct {
 }
 
 func main() {
+	ctx := kong.Parse(&cli,
+		kong.Name("gotestchunk"),
+		kong.Description("A tool for listing and chunking Go tests"),
+		kong.UsageOnError(),
+		kong.Vars{
+			"version": Version,
+		},
+	)
+
 	logger := log.Output(zerolog.ConsoleWriter{
 		Out: os.Stderr,
 	})
@@ -31,15 +40,6 @@ func main() {
 	} else {
 		logger = logger.Level(zerolog.InfoLevel)
 	}
-
-	ctx := kong.Parse(&cli,
-		kong.Name("gotestchunk"),
-		kong.Description("A tool for listing and chunking Go tests"),
-		kong.UsageOnError(),
-		kong.Vars{
-			"version": Version,
-		},
-	)
 
 	if cli.Version {
 		fmt.Printf("gotestchunk version %s\n", Version)

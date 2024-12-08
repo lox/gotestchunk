@@ -1,7 +1,7 @@
 package commands
 
 import (
-	"io"
+	"os"
 	"testing"
 
 	"github.com/lox/gotestchunk/pkg/testlist"
@@ -11,67 +11,117 @@ import (
 func TestTestCmd_Run(t *testing.T) {
 	tests := []struct {
 		name      string
-		chunks    int
-		chunk     int
-		pkgPath   string
-		json      bool
-		verbose   bool
-		args      []string
+		cmd       *TestCmd
 		wantError bool
 	}{
 		{
-			name:    "single chunk",
-			chunks:  1,
-			chunk:   1,
-			pkgPath: "./pkg/example/...",
-			json:    false,
+			name: "single chunk",
+			cmd: &TestCmd{
+				Chunks: 1,
+				Chunk:  1,
+				Args:   []string{"./pkg/example/..."},
+			},
 		},
 		{
-			name:    "first of two chunks",
-			chunks:  2,
-			chunk:   1,
-			pkgPath: "./pkg/example/...",
-			json:    false,
+			name: "first of two chunks",
+			cmd: &TestCmd{
+				Chunks: 2,
+				Chunk:  1,
+				Args:   []string{"./pkg/example/..."},
+			},
 		},
 		{
-			name:    "with extra args",
-			chunks:  2,
-			chunk:   1,
-			pkgPath: "./pkg/example/...",
-			args:    []string{"--", "-count=1", "-timeout=10s"},
-			json:    false,
+			name: "second of two chunks with verbose",
+			cmd: &TestCmd{
+				Chunks:  2,
+				Chunk:   2,
+				Verbose: true,
+				Args:    []string{"./pkg/example/..."},
+			},
 		},
 		{
-			name:    "second of two chunks with verbose",
-			chunks:  2,
-			chunk:   2,
-			pkgPath: "./pkg/example/...",
-			verbose: true,
-			json:    false,
+			name: "with extra args",
+			cmd: &TestCmd{
+				Chunks: 1,
+				Chunk:  1,
+				Args:   []string{"./pkg/example/...", "--", "-v", "-count=1"},
+			},
 		},
 		{
-			name:      "invalid package",
-			chunks:    1,
-			chunk:     1,
-			pkgPath:   "./does-not-exist",
+			name: "invalid chunk index",
+			cmd: &TestCmd{
+				Chunks: 2,
+				Chunk:  3,
+				Args:   []string{"./pkg/example/..."},
+			},
+			wantError: true,
+		},
+		{
+			name: "invalid package",
+			cmd: &TestCmd{
+				Chunks: 1,
+				Chunk:  1,
+				Args:   []string{"./does-not-exist"},
+			},
 			wantError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		testlist.TestRunWithModuleRoot(t, tt.name, func(t *testing.T) {
-			cmd := &TestCmd{
-				Chunks:  tt.chunks,
-				Chunk:   tt.chunk,
-				Args:    append([]string{tt.pkgPath}, tt.args...),
-				JSON:    tt.json,
-				Verbose: tt.verbose,
-			}
-
-			logger := zerolog.New(io.Discard)
-			err := cmd.Run(&logger)
+			logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr}).Level(zerolog.DebugLevel)
+			err := tt.cmd.Run(&logger)
 			if (err != nil) != tt.wantError {
 				t.Errorf("TestCmd.Run() error = %v, wantError %v", err, tt.wantError)
+			}
+		})
+	}
+}
+
+func TestTestCmd_Validate(t *testing.T) {
+	tests := []struct {
+		name      string
+		cmd       *TestCmd
+		wantError bool
+	}{
+		{
+			name: "valid chunks",
+			cmd: &TestCmd{
+				Chunks: 2,
+				Chunk:  1,
+			},
+		},
+		{
+			name: "invalid chunks",
+			cmd: &TestCmd{
+				Chunks: 0,
+				Chunk:  1,
+			},
+			wantError: true,
+		},
+		{
+			name: "invalid chunk",
+			cmd: &TestCmd{
+				Chunks: 2,
+				Chunk:  3,
+			},
+			wantError: true,
+		},
+		{
+			name: "negative chunk",
+			cmd: &TestCmd{
+				Chunks: 2,
+				Chunk:  -1,
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cmd.Validate()
+			if (err != nil) != tt.wantError {
+				t.Errorf("TestCmd.Validate() error = %v, wantError %v", err, tt.wantError)
 			}
 		})
 	}
