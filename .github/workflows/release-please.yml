@@ -1,0 +1,35 @@
+name: Release Please
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: google-github-actions/release-please-action@v3
+        id: release
+        with:
+          release-type: go
+          package-name: gotestchunk
+
+      # Setup and build/publish only if a new release was created
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created }}
+
+      - name: Initialize Hermit
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          ./bin/hermit env -r >> $GITHUB_ENV
+
+      - name: Build and publish
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./bin/goreleaser release --clean
